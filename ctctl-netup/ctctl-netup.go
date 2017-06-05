@@ -9,9 +9,9 @@ import (
 	"io/ioutil"
 	"log"
 	"log/syslog"
+	"os"
 	"os/exec"
 	"strings"
-	"os"
 )
 
 var (
@@ -28,15 +28,14 @@ func init() {
 }
 
 type ipAddr struct {
-        ip	 string
-        routeDev string
+	ip       string
+	routeDev string
 }
 
 type proxyDev struct {
-        dev string
-        gwIps []string
+	dev   string
+	gwIps []string
 }
-
 
 func main() {
 	ctName := flag.Arg(0)
@@ -60,7 +59,7 @@ func main() {
 	var v4Ips []string
 	var v6Ips []string
 
-        proxyDevs := make(map[string]proxyDev)
+	proxyDevs := make(map[string]proxyDev)
 
 	//Check for which network has correct up script
 	for i := 0; i < len(c.ConfigItem("lxc.network")); i++ {
@@ -69,19 +68,19 @@ func main() {
 		if strings.HasSuffix(upScript[0], os.Args[0]) {
 			v4Ips = c.ConfigItem(fmt.Sprintf("lxc.network.%d.ipv4", i))
 			v6Ips = c.ConfigItem(fmt.Sprintf("lxc.network.%d.ipv6", i))
-                        
+
 			hostProxyDev := proxyDev{
-				dev: hostDevName,
-				gwIps: make([]string,0),
+				dev:   hostDevName,
+				gwIps: make([]string, 0),
 			}
 			v4Gws := c.ConfigItem(fmt.Sprintf("lxc.network.%d.ipv4.gateway", i))
 			if v4Gws[0] != "" {
-				hostProxyDev.gwIps = append(hostProxyDev.gwIps,v4Gws[0])
+				hostProxyDev.gwIps = append(hostProxyDev.gwIps, v4Gws[0])
 			}
-                        v6Gws := c.ConfigItem(fmt.Sprintf("lxc.network.%d.ipv6.gateway", i))
+			v6Gws := c.ConfigItem(fmt.Sprintf("lxc.network.%d.ipv6.gateway", i))
 			if v6Gws[0] != "" {
-                                hostProxyDev.gwIps = append(hostProxyDev.gwIps,v6Gws[0])
-                        }
+				hostProxyDev.gwIps = append(hostProxyDev.gwIps, v6Gws[0])
+			}
 
 			proxyDevs[hostDevName] = hostProxyDev
 			break //Found what we needed
@@ -93,8 +92,8 @@ func main() {
 	}
 
 	if len(proxyDevs[hostDevName].gwIps) <= 0 {
-                log.Fatal("No Gateways defined for CT Dev Ref: ", ctName)
-        }
+		log.Fatal("No Gateways defined for CT Dev Ref: ", ctName)
+	}
 
 	ipAddrs := make([]ipAddr, 0)
 	enrichIps(v4Ips, &ipAddrs, proxyDevs)
@@ -148,29 +147,29 @@ func enrichIps(ips []string, outIps *[]ipAddr, outDevs map[string]proxyDev) {
 }
 
 func activateProxyNdp(dev string) error {
-        //Enable proxy ndp on  interface (needed before adding specific proxy entries)
-        proxyNdpFile := "/proc/sys/net/ipv6/conf/" + dev + "/proxy_ndp"
-        return ioutil.WriteFile(proxyNdpFile, []byte("1"), 0644)
+	//Enable proxy ndp on  interface (needed before adding specific proxy entries)
+	proxyNdpFile := "/proc/sys/net/ipv6/conf/" + dev + "/proxy_ndp"
+	return ioutil.WriteFile(proxyNdpFile, []byte("1"), 0644)
 }
 
 func runUp(c *lxc.Container, ctName string, hostDevName string, ips []ipAddr, proxyDevs map[string]proxyDev) {
 	log.Printf("LXC Net UP: %s %s %s", ctName, hostDevName, ips)
 
-	for _,proxyDev := range proxyDevs {
+	for _, proxyDev := range proxyDevs {
 		if err := activateProxyNdp(proxyDev.dev); err != nil {
-       	         log.Fatal("Error activating proxy ndp on ", proxyDev.dev, ": ", err)
+			log.Fatal("Error activating proxy ndp on ", proxyDev.dev, ": ", err)
 		}
 		log.Print("Activated proxy ndp on ", proxyDev.dev)
-		
-	        for _, gwIp := range proxyDev.gwIps {
-        	        //Setup proxy arp for default IP route on host interface
-                	cmd := exec.Command("ip", "neigh", "replace", "proxy", gwIp, "dev", proxyDev.dev)
-                	if stdoutStderr, err := cmd.CombinedOutput(); err != nil {
-                        	log.Fatal("Error adding proxy IP address '", gwIp, "': ", err, " ", string(stdoutStderr))
-                	}
-                	log.Print("Added proxy for IP ", gwIp, " on ", proxyDev.dev)
 
-        	}
+		for _, gwIp := range proxyDev.gwIps {
+			//Setup proxy arp for default IP route on host interface
+			cmd := exec.Command("ip", "neigh", "replace", "proxy", gwIp, "dev", proxyDev.dev)
+			if stdoutStderr, err := cmd.CombinedOutput(); err != nil {
+				log.Fatal("Error adding proxy IP address '", gwIp, "': ", err, " ", string(stdoutStderr))
+			}
+			log.Print("Added proxy for IP ", gwIp, " on ", proxyDev.dev)
+
+		}
 	}
 
 	//Add static route and proxy entry for each IP
