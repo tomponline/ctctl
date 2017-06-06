@@ -152,6 +152,12 @@ func activateProxyNdp(dev string) error {
 	return ioutil.WriteFile(proxyNdpFile, []byte("1"), 0644)
 }
 
+func activateNonLocalBind() error {
+	//Enable non-local bind.
+	proxyNdpFile := "/proc/sys/net/ipv4/ip_nonlocal_bind"
+	return ioutil.WriteFile(proxyNdpFile, []byte("1"), 0644)
+}
+
 func runUp(c *lxc.Container, ctName string, hostDevName string, ips []ipAddr, proxyDevs map[string]proxyDev) {
 	log.Printf("LXC Net UP: %s %s %s", ctName, hostDevName, ips)
 
@@ -165,26 +171,44 @@ func runUp(c *lxc.Container, ctName string, hostDevName string, ips []ipAddr, pr
 			//Setup proxy arp for default IP route on host interface
 			cmd := exec.Command("ip", "neigh", "replace", "proxy", gwIp, "dev", proxyDev.dev)
 			if stdoutStderr, err := cmd.CombinedOutput(); err != nil {
-				log.Fatal("Error adding proxy IP address '", gwIp, "': ", err, " ", string(stdoutStderr))
+				log.Fatal("Error adding proxy IP '", gwIp, "': ", err, " ", string(stdoutStderr))
 			}
 			log.Print("Added proxy for IP ", gwIp, " on ", proxyDev.dev)
 
 		}
 	}
 
+	//Enable non-local bind for ARP send.
+	if err := activateNonLocalBind(); err != nil {
+		log.Fatal("Error activating non-local bind: ", err)
+	}
+	log.Print("Activated non-local bind")
+
 	//Add static route and proxy entry for each IP
 	for _, ip := range ips {
 		cmd := exec.Command("ip", "route", "add", ip.ip, "dev", hostDevName)
 		if stdoutStderr, err := cmd.CombinedOutput(); err != nil {
-			log.Fatal("Error adding static route for IP address '", ip.ip, "': ", err, " ", string(stdoutStderr))
+			log.Fatal("Error adding static route for IP '", ip.ip, "': ", err, " ", string(stdoutStderr))
 		}
 		log.Print("Added static route for IP ", ip.ip, " to ", hostDevName)
 
 		cmd = exec.Command("ip", "neigh", "replace", "proxy", ip.ip, "dev", ip.routeDev)
 		if stdoutStderr, err := cmd.CombinedOutput(); err != nil {
-			log.Fatal("Error adding proxy for IP address '", ip.ip, "': ", err, " ", string(stdoutStderr))
+			log.Fatal("Error adding proxy for IP '", ip.ip, "': ", err, " ", string(stdoutStderr))
 		}
 		log.Print("Added proxy for IP ", ip.ip, " on ", ip.routeDev)
+
+		//Send NDP or ARP (IPv6 and IPv4 respectively) adverts
+		if strings.Contains(ip.ip, ":") {
+			cmd = exec.Command("ndsend", ip.ip, ip.routeDev)
+		} else {
+			cmd = exec.Command("arping", "-c1", "-A", ip.ip, "-I", ip.routeDev)
+		}
+
+		if stdoutStderr, err := cmd.CombinedOutput(); err != nil {
+			log.Fatal("Error sending NDP/ARP for IP '", ip.ip, "': ", err, " ", string(stdoutStderr))
+		}
+		log.Print("Advertised NDP/ARP for IP '", ip.ip, "' on ", ip.routeDev)
 	}
 }
 
