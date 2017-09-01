@@ -161,12 +161,15 @@ func activateNonLocalBind() error {
 func runUp(c *lxc.Container, ctName string, hostDevName string, ips []ipAddr, proxyDevs map[string]proxyDev) {
 	log.Printf("LXC Net UP: %s %s %s", ctName, hostDevName, ips)
 
-	for _, proxyDev := range proxyDevs {
-		if err := activateProxyNdp(proxyDev.dev); err != nil {
-			log.Fatal("Error activating proxy ndp on ", proxyDev.dev, ": ", err)
-		}
-		log.Print("Activated proxy ndp on ", proxyDev.dev)
+	//Activate IPv6 proxy ndp on all interfaces to ensure IPv6 connectivity works.
+	//There is some unexpected behaviour when proxy ndp is only enabled on selected interfaces
+	//that does not occur with proxy arp for IPv4.
+	if err := activateProxyNdp("all"); err != nil {
+		log.Fatal("Error activating proxy ndp: ", err)
+	}
+	log.Print("Activated proxy ndp")
 
+	for _, proxyDev := range proxyDevs {
 		for _, gwIp := range proxyDev.gwIps {
 			//Setup proxy arp for default IP route on host interface
 			cmd := exec.Command("ip", "neigh", "replace", "proxy", gwIp, "dev", proxyDev.dev)
