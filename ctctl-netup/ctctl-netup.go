@@ -27,12 +27,7 @@ func init() {
 	}
 }
 
-type ipAddr struct {
-	ip       string
-	routeDev string
-}
-
-type proxyDev struct {
+type gwDev struct {
 	dev   string
 	gwIps []string
 }
@@ -59,7 +54,7 @@ func main() {
 	var v4Ips []string
 	var v6Ips []string
 
-	proxyDevs := make(map[string]proxyDev)
+	gwProxyDevs := make(map[string]gwDev)
 
 	//Check for which network has correct up script
 	for i := 0; i < len(c.ConfigItem("lxc.network")); i++ {
@@ -69,20 +64,20 @@ func main() {
 			v4Ips = c.ConfigItem(fmt.Sprintf("lxc.network.%d.ipv4", i))
 			v6Ips = c.ConfigItem(fmt.Sprintf("lxc.network.%d.ipv6", i))
 
-			hostProxyDev := proxyDev{
+			gwProxyDev := gwDev{
 				dev:   hostDevName,
 				gwIps: make([]string, 0),
 			}
 			v4Gws := c.ConfigItem(fmt.Sprintf("lxc.network.%d.ipv4.gateway", i))
 			if v4Gws[0] != "" {
-				hostProxyDev.gwIps = append(hostProxyDev.gwIps, v4Gws[0])
+				gwProxyDev.gwIps = append(gwProxyDev.gwIps, v4Gws[0])
 			}
 			v6Gws := c.ConfigItem(fmt.Sprintf("lxc.network.%d.ipv6.gateway", i))
 			if v6Gws[0] != "" {
-				hostProxyDev.gwIps = append(hostProxyDev.gwIps, v6Gws[0])
+				gwProxyDev.gwIps = append(gwProxyDev.gwIps, v6Gws[0])
 			}
 
-			proxyDevs[hostDevName] = hostProxyDev
+			gwProxyDevs[hostDevName] = gwProxyDev
 			break //Found what we needed
 		}
 	}
@@ -91,25 +86,25 @@ func main() {
 		log.Fatal("No IPs defined for CT Dev Ref: ", ctName)
 	}
 
-	if len(proxyDevs[hostDevName].gwIps) <= 0 {
+	if len(gwProxyDevs[hostDevName].gwIps) <= 0 {
 		log.Fatal("No Gateways defined for CT Dev Ref: ", ctName)
 	}
 
-	ipAddrs := make([]ipAddr, 0)
-	enrichIps(v4Ips, &ipAddrs, proxyDevs)
-	enrichIps(v6Ips, &ipAddrs, proxyDevs)
+	ipAddrs := make([]string, 0, 2)
+	cleanIps(v4Ips, &ipAddrs)
+	cleanIps(v6Ips, &ipAddrs)
 
 	switch context {
 	case "up":
-		runUp(c, ctName, hostDevName, ipAddrs, proxyDevs)
+		runUp(c, ctName, hostDevName, ipAddrs, gwProxyDevs)
 	case "down":
-		runDown(c, ctName, hostDevName, ipAddrs, proxyDevs)
+		runDown(c, ctName, hostDevName, ipAddrs)
 	default:
 		log.Fatal("Unknown context: ", context)
 	}
 }
 
-func enrichIps(ips []string, outIps *[]ipAddr, outDevs map[string]proxyDev) {
+func cleanIps(ips []string, outIps *[]string) {
 	for _, ip := range ips {
 		//Convert to IP without netmask.
 		index := strings.Index(ip, "/")
@@ -119,31 +114,29 @@ func enrichIps(ips []string, outIps *[]ipAddr, outDevs map[string]proxyDev) {
 		}
 
 		ip := ip[:index] //Strip subnet from IP
+		*outIps = append(*outIps, ip)
+	}
 
-		//Figure out interface to add proxy arp for
-		cmd := exec.Command("ip", "-o", "route", "get", ip)
-		stdoutStderr, err := cmd.CombinedOutput()
-		if err != nil {
-			log.Print(err, string(stdoutStderr))
-			continue
-		}
+}
 
-		parts := strings.Fields(string(stdoutStderr))
-		for index, val := range parts {
-			if val == "dev" {
-				devName := parts[index+1]
-				*outIps = append(*outIps, ipAddr{
-					ip:       ip,
-					routeDev: devName,
-				})
-				outDevs[devName] = proxyDev{
-					dev: devName,
-				}
-				break
-			}
+func getRouteDev(ip string) string {
+	//Figure out interface to add proxy arp for
+	cmd := exec.Command("ip", "-o", "route", "get", ip)
+	stdoutStderr, err := cmd.CombinedOutput()
+	if err != nil {
+		log.Print(err, string(stdoutStderr))
+		return ""
+	}
+
+	parts := strings.Fields(string(stdoutStderr))
+	for index, val := range parts {
+		if val == "dev" {
+			devName := parts[index+1]
+			return devName
 		}
 	}
-	return
+
+	return ""
 }
 
 func activateProxyNdp(dev string) error {
@@ -158,7 +151,7 @@ func activateNonLocalBind() error {
 	return ioutil.WriteFile(proxyNdpFile, []byte("1"), 0644)
 }
 
-func runUp(c *lxc.Container, ctName string, hostDevName string, ips []ipAddr, proxyDevs map[string]proxyDev) {
+func runUp(c *lxc.Container, ctName string, hostDevName string, ips []string, gwProxyDevs map[string]gwDev) {
 	log.Printf("LXC Net UP: %s %s %s", ctName, hostDevName, ips)
 
 	//Activate IPv6 proxy ndp on all interfaces to ensure IPv6 connectivity works.
@@ -169,14 +162,14 @@ func runUp(c *lxc.Container, ctName string, hostDevName string, ips []ipAddr, pr
 	}
 	log.Print("Activated proxy ndp")
 
-	for _, proxyDev := range proxyDevs {
-		for _, gwIp := range proxyDev.gwIps {
+	for _, gwDev := range gwProxyDevs {
+		for _, gwIp := range gwDev.gwIps {
 			//Setup proxy arp for default IP route on host interface
-			cmd := exec.Command("ip", "neigh", "replace", "proxy", gwIp, "dev", proxyDev.dev)
+			cmd := exec.Command("ip", "neigh", "replace", "proxy", gwIp, "dev", gwDev.dev)
 			if stdoutStderr, err := cmd.CombinedOutput(); err != nil {
 				log.Fatal("Error adding proxy IP '", gwIp, "': ", err, " ", string(stdoutStderr))
 			}
-			log.Print("Added proxy for IP ", gwIp, " on ", proxyDev.dev)
+			log.Print("Added proxy for IP ", gwIp, " on ", gwDev.dev)
 
 		}
 	}
@@ -189,31 +182,61 @@ func runUp(c *lxc.Container, ctName string, hostDevName string, ips []ipAddr, pr
 
 	//Add static route and proxy entry for each IP
 	for _, ip := range ips {
-		cmd := exec.Command("ip", "route", "add", ip.ip, "dev", hostDevName)
-		if stdoutStderr, err := cmd.CombinedOutput(); err != nil {
-			log.Fatal("Error adding static route for IP '", ip.ip, "': ", err, " ", string(stdoutStderr))
-		}
-		log.Print("Added static route for IP ", ip.ip, " to ", hostDevName)
+		//Lookup current route dev so we can setup proxy arp/ndp.
+		routeDev := getRouteDev(ip)
 
-		cmd = exec.Command("ip", "neigh", "replace", "proxy", ip.ip, "dev", ip.routeDev)
-		if stdoutStderr, err := cmd.CombinedOutput(); err != nil {
-			log.Fatal("Error adding proxy for IP '", ip.ip, "': ", err, " ", string(stdoutStderr))
+		if routeDev == "" {
+			log.Fatal("Can't find route device for IP '", ip, "'")
 		}
-		log.Print("Added proxy for IP ", ip.ip, " on ", ip.routeDev)
+
+		cmd := exec.Command("ip", "route", "add", ip, "dev", hostDevName)
+		if stdoutStderr, err := cmd.CombinedOutput(); err != nil {
+			log.Fatal("Error adding static route for IP '", ip, "': ", err, " ", string(stdoutStderr))
+		}
+		log.Print("Added static route for IP ", ip, " to ", hostDevName)
+
+		cmd = exec.Command("ip", "neigh", "replace", "proxy", ip, "dev", routeDev)
+		if stdoutStderr, err := cmd.CombinedOutput(); err != nil {
+			log.Fatal("Error adding proxy for IP '", ip, "': ", err, " ", string(stdoutStderr))
+		}
+		log.Print("Added proxy for IP ", ip, " on ", routeDev)
 
 		//Send NDP or ARP (IPv6 and IPv4 respectively) adverts
-		if strings.Contains(ip.ip, ":") {
-			cmd = exec.Command("ndsend", ip.ip, ip.routeDev)
+		if strings.Contains(ip, ":") {
+			cmd = exec.Command("ndsend", ip, routeDev)
 		} else {
-			cmd = exec.Command("arping", "-c1", "-A", ip.ip, "-I", ip.routeDev)
+			cmd = exec.Command("arping", "-c1", "-A", ip, "-I", routeDev)
 		}
 
 		if stdoutStderr, err := cmd.CombinedOutput(); err != nil {
-			log.Fatal("Error sending NDP/ARP for IP '", ip.ip, "': ", err, " ", string(stdoutStderr))
+			log.Fatal("Error sending NDP/ARP for IP '", ip, "': ", err, " ", string(stdoutStderr))
 		}
-		log.Print("Advertised NDP/ARP for IP '", ip.ip, "' on ", ip.routeDev)
+		log.Print("Advertised NDP/ARP for IP '", ip, "' on ", routeDev)
 	}
 }
 
-func runDown(c *lxc.Container, ctName string, hostDevName string, ips []ipAddr, proxyDevs map[string]proxyDev) {
+func runDown(c *lxc.Container, ctName string, hostDevName string, ips []string) {
+	log.Printf("LXC Net Down: %s %s %s", ctName, hostDevName, ips)
+
+	//Remove static route and proxy entry for each IP
+	for _, ip := range ips {
+		cmd := exec.Command("ip", "route", "del", ip, "dev", hostDevName)
+		if stdoutStderr, err := cmd.CombinedOutput(); err != nil {
+			log.Fatal("Error deleting static route for IP '", ip, "': ", err, " ", string(stdoutStderr))
+		}
+		log.Print("Deleted static route for IP ", ip, " to ", hostDevName)
+
+		//Now static route is removed, find original route dev so we can remove proxy arp/ndp config.
+		routeDev := getRouteDev(ip)
+
+		if routeDev == "" {
+			continue
+		}
+
+		cmd = exec.Command("ip", "neigh", "del", "proxy", ip, "dev", routeDev)
+		if stdoutStderr, err := cmd.CombinedOutput(); err != nil {
+			log.Print("Error remove proxy for IP '", ip, "': ", err, " ", string(stdoutStderr))
+		}
+		log.Print("Deleted proxy for IP ", ip, " on ", routeDev)
+	}
 }
