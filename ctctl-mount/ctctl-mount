@@ -1,0 +1,29 @@
+#!/bin/bash
+
+cp /etc/resolv.conf ${LXC_ROOTFS_MOUNT}/etc/resolv.conf
+
+#Debian
+if [ -f ${LXC_ROOTFS_MOUNT}/etc/network/interfaces ]; then
+echo "# The loopback network interface
+auto lo
+iface lo inet loopback
+" > ${LXC_ROOTFS_MOUNT}/etc/network/interfaces
+fi
+
+#Centos/Redhat
+if [ -f ${LXC_ROOTFS_MOUNT}/etc/sysconfig/network-scripts/ifcfg-eth0 ]; then
+echo "
+DEVICE=eth0
+BOOTPROTO=none
+ONBOOT=no
+NM_CONTROLLED=no
+TYPE=Ethernet
+MTU=
+" > ${LXC_ROOTFS_MOUNT}/etc/sysconfig/network-scripts/ifcfg-eth0
+
+##Set timezone to UTC
+echo 'ZONE="Etc/UTC"' > ${LXC_ROOTFS_MOUNT}/etc/sysconfig/clock
+/bin/cp  ${LXC_ROOTFS_MOUNT}/usr/share/zoneinfo/Etc/UTC ${LXC_ROOTFS_MOUNT}/etc/localtime
+fi
+
+
