@@ -55,30 +55,40 @@ func main() {
 	var v6Ips []string
 
 	gwProxyDevs := make(map[string]gwDev)
+	netPrefixes := []string{"lxc.net", "lxc.network"}
 
-	//Check for which network has correct up script
-	for i := 0; i < len(c.ConfigItem("lxc.network")); i++ {
-		upScript := c.ConfigItem(fmt.Sprintf("lxc.network.%d.script.up", i))
-		//Check up script is this program.
-		if strings.HasSuffix(upScript[0], os.Args[0]) {
-			v4Ips = c.ConfigItem(fmt.Sprintf("lxc.network.%d.ipv4", i))
-			v6Ips = c.ConfigItem(fmt.Sprintf("lxc.network.%d.ipv6", i))
+	for _, netPrefix := range netPrefixes {
+		//Check for which network has correct up script
+		for i := 0; i < len(c.ConfigItem(netPrefix)); i++ {
+			upScript := c.ConfigItem(fmt.Sprintf("%s.%d.script.up", netPrefix, i))
+			//Check up script is this program.
+			if strings.HasSuffix(upScript[0], os.Args[0]) {
+				if netPrefix == "lxc.network" {
+					v4Ips = c.ConfigItem(fmt.Sprintf("%s.%d.ipv4", netPrefix, i))
+					v6Ips = c.ConfigItem(fmt.Sprintf("%s.%d.ipv6", netPrefix, i))
 
-			gwProxyDev := gwDev{
-				dev:   hostDevName,
-				gwIps: make([]string, 0),
-			}
-			v4Gws := c.ConfigItem(fmt.Sprintf("lxc.network.%d.ipv4.gateway", i))
-			if v4Gws[0] != "" {
-				gwProxyDev.gwIps = append(gwProxyDev.gwIps, v4Gws[0])
-			}
-			v6Gws := c.ConfigItem(fmt.Sprintf("lxc.network.%d.ipv6.gateway", i))
-			if v6Gws[0] != "" {
-				gwProxyDev.gwIps = append(gwProxyDev.gwIps, v6Gws[0])
-			}
+				} else {
+					v4Ips = c.ConfigItem(fmt.Sprintf("%s.%d.ipv4.address", netPrefix, i))
+					v6Ips = c.ConfigItem(fmt.Sprintf("%s.%d.ipv6.address", netPrefix, i))
+				}
 
-			gwProxyDevs[hostDevName] = gwProxyDev
-			break //Found what we needed
+				gwProxyDev := gwDev{
+					dev:   hostDevName,
+					gwIps: make([]string, 0),
+				}
+
+				v4Gws := c.ConfigItem(fmt.Sprintf("%s.%d.ipv4.gateway", netPrefix, i))
+				if v4Gws[0] != "" {
+					gwProxyDev.gwIps = append(gwProxyDev.gwIps, v4Gws[0])
+				}
+				v6Gws := c.ConfigItem(fmt.Sprintf("%s.%d.ipv6.gateway", netPrefix, i))
+				if v6Gws[0] != "" {
+					gwProxyDev.gwIps = append(gwProxyDev.gwIps, v6Gws[0])
+				}
+
+				gwProxyDevs[hostDevName] = gwProxyDev
+				break //Found what we needed
+			}
 		}
 	}
 
