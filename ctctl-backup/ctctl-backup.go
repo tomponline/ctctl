@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strings"
 )
 
 const dirMnt = "/mnt/ctctl-backup"
@@ -38,6 +39,10 @@ func main() {
 		if c.Running() {
 			ctName := c.Name()
 			ctRootFs := c.RunningConfigItem("lxc.rootfs.path")[0]
+
+			//LXC 2.1 adds "lvm:" to LVM rootfs paths, so remove it.
+			ctRootFs = strings.TrimPrefix(ctRootFs, "lvm:")
+
 			//Support pre LXC 2.1.0 configs
 			if ctRootFs == "" {
 				ctRootFs = c.RunningConfigItem("lxc.rootfs")[0]
