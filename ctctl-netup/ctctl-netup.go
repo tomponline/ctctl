@@ -5,6 +5,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/tomponline/ctctl/internal/ndp"
 	"gopkg.in/lxc/go-lxc.v2"
 	"io/ioutil"
 	"log"
@@ -213,14 +214,16 @@ func runUp(c *lxc.Container, ctName string, hostDevName string, ips []string, gw
 
 		//Send NDP or ARP (IPv6 and IPv4 respectively) adverts
 		if strings.Contains(ip, ":") {
-			cmd = exec.Command("ndsend", ip, routeDev)
+			if err := ndp.SendUnsolicited(routeDev, ip); err != nil {
+				log.Fatal("Error sending NDP for IP '", ip, "': ", err)
+			}
 		} else {
 			cmd = exec.Command("arping", "-c1", "-A", ip, "-I", routeDev)
+			if stdoutStderr, err := cmd.CombinedOutput(); err != nil {
+				log.Fatal("Error sending ARP for IP '", ip, "': ", err, " ", string(stdoutStderr))
+			}
 		}
 
-		if stdoutStderr, err := cmd.CombinedOutput(); err != nil {
-			log.Fatal("Error sending NDP/ARP for IP '", ip, "': ", err, " ", string(stdoutStderr))
-		}
 		log.Print("Advertised NDP/ARP for IP '", ip, "' on ", routeDev)
 	}
 }
