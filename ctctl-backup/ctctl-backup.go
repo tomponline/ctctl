@@ -116,7 +116,7 @@ func phase2(ctName string, rootfs string) error {
 }
 
 func snapshotCreate(device string) error {
-	cmd := exec.Command("lvcreate", "-s", "--ignoreactivationskip", "--permission", "r", "-n", snapName, device)
+	cmd := exec.Command("lvcreate", "-s", "-L", "1G", "--ignoreactivationskip", "--permission", "r", "-n", snapName, device)
 	log.Print("Snapshotting ", device)
 	if stdoutStderr, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("Snapshot failed: %v, %s", err, string(stdoutStderr))
