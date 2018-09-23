@@ -5,6 +5,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"github.com/tomponline/ctctl/internal/arp"
 	"github.com/tomponline/ctctl/internal/ndp"
 	"gopkg.in/lxc/go-lxc.v2"
 	"io/ioutil"
@@ -156,12 +157,6 @@ func activateProxyNdp(dev string) error {
 	return ioutil.WriteFile(proxyNdpFile, []byte("1"), 0644)
 }
 
-func activateNonLocalBind() error {
-	//Enable non-local bind.
-	proxyNdpFile := "/proc/sys/net/ipv4/ip_nonlocal_bind"
-	return ioutil.WriteFile(proxyNdpFile, []byte("1"), 0644)
-}
-
 func runUp(c *lxc.Container, ctName string, hostDevName string, ips []string, gwProxyDevs map[string]gwDev) {
 	log.Printf("LXC Net UP: %s %s %s", ctName, hostDevName, ips)
 
@@ -184,12 +179,6 @@ func runUp(c *lxc.Container, ctName string, hostDevName string, ips []string, gw
 
 		}
 	}
-
-	//Enable non-local bind for ARP send.
-	if err := activateNonLocalBind(); err != nil {
-		log.Fatal("Error activating non-local bind: ", err)
-	}
-	log.Print("Activated non-local bind")
 
 	//Add static route and proxy entry for each IP
 	for _, ip := range ips {
@@ -215,12 +204,11 @@ func runUp(c *lxc.Container, ctName string, hostDevName string, ips []string, gw
 		//Send NDP or ARP (IPv6 and IPv4 respectively) adverts
 		if strings.Contains(ip, ":") {
 			if err := ndp.SendUnsolicited(routeDev, ip); err != nil {
-				log.Fatal("Error sending NDP for IP '", ip, "': ", err)
+				log.Fatal("Error sending NDP for IP '", ip, " on iface ", routeDev, ": ", err)
 			}
 		} else {
-			cmd = exec.Command("arping", "-c1", "-A", ip, "-I", routeDev)
-			if stdoutStderr, err := cmd.CombinedOutput(); err != nil {
-				log.Fatal("Error sending ARP for IP '", ip, "': ", err, " ", string(stdoutStderr))
+			if err := arp.SendUnsolicited(routeDev, ip); err != nil {
+				log.Fatal("Error sending ARP for IP '", ip, " on iface ", routeDev, ": ", err)
 			}
 		}
 

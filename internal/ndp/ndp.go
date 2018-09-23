@@ -15,23 +15,26 @@ func SendUnsolicited(iface string, addr string) error {
 	// Set up an *ndp.Conn, bound to this interface's link-local IPv6 address.
 	c, _, err := ndp.Dial(ifi, ndp.LinkLocal)
 	if err != nil {
-		fmt.Errorf("failed to dial NDP connection: %v", err)
+		return fmt.Errorf("failed to dial NDP connection: %v", err)
 	}
 	// Clean up after the connection is no longer needed.
 	defer c.Close()
 
 	// Choose a target with a known IPv6 link-local address.
-	target := net.ParseIP(addr)
+	ip := net.ParseIP(addr)
+	if ip == nil {
+		return fmt.Errorf("invalid address")
+	}
 
 	// Send to all node multicast address.
 	snm := net.ParseIP("ff02::1")
-	if err != nil {
-		fmt.Errorf("failed to determine solicited-node multicast address: %v", err)
+	if snm == nil {
+		return fmt.Errorf("failed to determine solicited-node multicast address: %v", err)
 	}
 
 	// Build a neighbor advert message.
 	m := &ndp.NeighborAdvertisement{
-		TargetAddress: target,
+		TargetAddress: ip,
 		Override:      true,
 		Options: []ndp.Option{
 			&ndp.LinkLayerAddress{
@@ -43,7 +46,7 @@ func SendUnsolicited(iface string, addr string) error {
 
 	// Send the multicast message.
 	if err := c.WriteTo(m, nil, snm); err != nil {
-		fmt.Errorf("failed to write neighbor solicitation: %v", err)
+		return fmt.Errorf("failed to write neighbor solicitation: %v", err)
 	}
 
 	return nil
