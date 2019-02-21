@@ -25,5 +25,3 @@ MTU=
 echo 'ZONE="Etc/UTC"' > ${LXC_ROOTFS_MOUNT}/etc/sysconfig/clock
 /bin/cp  ${LXC_ROOTFS_MOUNT}/usr/share/zoneinfo/Etc/UTC ${LXC_ROOTFS_MOUNT}/etc/localtime
 fi
-
-

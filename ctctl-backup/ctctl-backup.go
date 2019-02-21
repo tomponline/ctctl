@@ -5,11 +5,12 @@ package main
 import (
 	"flag"
 	"fmt"
-	"gopkg.in/lxc/go-lxc.v2"
 	"log"
 	"os"
 	"os/exec"
 	"strings"
+
+	lxc "gopkg.in/lxc/go-lxc.v2"
 )
 
 const dirMnt = "/mnt/ctctl-backup"
